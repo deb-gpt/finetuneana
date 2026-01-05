@@ -81,7 +81,7 @@ export default function Home() {
     }
   };
 
-  const handleRefreshDashboard = (newIndexName?: string) => {
+  const handleRefreshDashboard = async (newIndexName?: string) => {
     // Trigger refresh by updating the trigger value
     setRefreshTrigger((prev) => prev + 1);
     // Auto-select the newly created index
@@ -91,6 +91,8 @@ export default function Home() {
         setViewMode('upload');
       }, 2000); // Wait for index to be fully available
     }
+    // Return Promise to satisfy type requirement
+    return Promise.resolve();
   };
 
   return (
