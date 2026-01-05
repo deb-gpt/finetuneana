@@ -272,7 +272,8 @@ export class PDFParserService {
     try {
       const extension = filename.toLowerCase().split('.').pop();
       if (extension === 'pdf') {
-        const data = await pdfParse(buffer, { page: 1 });
+        // pdfParse doesn't support page option, parse full PDF and take first part
+        const data = await pdfParse(buffer);
         return data.text.substring(0, 500); // First 500 chars
       } else {
         const parsed = await this.parseFile(buffer, filename);

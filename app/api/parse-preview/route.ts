@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { PDFParserService } from '@/lib/services/pdf-parser.service';
 
+// Mark route as dynamic
+export const dynamic = 'force-dynamic';
+
 /**
  * POST /api/parse-preview
  * Parse file for preview purposes (limited to prevent server overload)

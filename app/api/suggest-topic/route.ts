@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { OpenAIService } from '@/lib/services/openai.service';
 
+// Mark route as dynamic
+export const dynamic = 'force-dynamic';
+
 /**
  * POST /api/suggest-topic
  * Suggest topic and subtopic for a document using LLM

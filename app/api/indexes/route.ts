@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { PineconeService } from '@/lib/services/pinecone.service';
 
+// Mark route as dynamic
+export const dynamic = 'force-dynamic';
+
 /**
  * GET /api/indexes
  * List all Pinecone indexes with stats

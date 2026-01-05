@@ -2,6 +2,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import { OpenAIService } from '@/lib/services/openai.service';
 import { PineconeService } from '@/lib/services/pinecone.service';
 
+// Mark route as dynamic
+export const dynamic = 'force-dynamic';
+
 /**
  * POST /api/chat
  * RAG Chatbot - Retrieves relevant memories and generates contextual responses

@@ -8,6 +8,9 @@ import { OpenAIService } from '@/lib/services/openai.service';
 import { PineconeService } from '@/lib/services/pinecone.service';
 import { v4 as uuidv4 } from 'uuid';
 
+// Mark route as dynamic
+export const dynamic = 'force-dynamic';
+
 /**
  * POST /api/ingest
  * Ingest uploaded document into Pinecone index
