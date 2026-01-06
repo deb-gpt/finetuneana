@@ -121,7 +121,8 @@ export default function ChunkingConfig({
         {!text && (
           <div className="mt-4 p-4 bg-yellow-50 rounded-lg border border-yellow-200">
             <div className="text-sm text-yellow-700">
-              <strong>Note:</strong> Chunk preview is not available for this file type. 
+              <strong>Note:</strong> Chunk preview is not available for this file. 
+              This may be because the file is too large (over 4MB) or the file type requires server-side parsing. 
               The file will be properly parsed during ingestion. 
               You can still configure chunking settings - they will be applied during ingestion.
             </div>

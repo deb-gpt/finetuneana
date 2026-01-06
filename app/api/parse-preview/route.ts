@@ -4,6 +4,9 @@ import { PDFParserService } from '@/lib/services/pdf-parser.service';
 // Mark route as dynamic
 export const dynamic = 'force-dynamic';
 
+// Configure max duration for Vercel (Hobby plan: 10s, Pro: 60s)
+export const maxDuration = 30;
+
 /**
  * POST /api/parse-preview
  * Parse file for preview purposes (limited to prevent server overload)
@@ -20,11 +23,16 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Limit file size for preview (max 10MB)
-    if (file.size > 10 * 1024 * 1024) {
+    // Vercel has a 4.5MB limit for serverless functions
+    // Limit file size for preview (max 4MB to be safe)
+    const maxSize = 4 * 1024 * 1024; // 4MB
+    if (file.size > maxSize) {
       return NextResponse.json(
-        { error: 'File too large for preview (max 10MB)' },
-        { status: 400 }
+        { 
+          error: 'File too large for preview (max 4MB). The file will be parsed during ingestion.',
+          skipPreview: true 
+        },
+        { status: 413 }
       );
     }
 

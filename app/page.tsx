@@ -62,6 +62,12 @@ export default function Home() {
           if (response.ok) {
             const data = await response.json();
             setFileText(data.text || '');
+          } else if (response.status === 413) {
+            // File too large - skip preview but show message
+            const data = await response.json().catch(() => ({}));
+            setFileText('');
+            console.warn('File too large for preview, but ingestion will work');
+            // Show a user-friendly message (could add a toast notification here)
           } else {
             // If parsing fails, show empty (chunking will work during actual ingestion)
             setFileText('');

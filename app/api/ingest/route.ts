@@ -11,6 +11,9 @@ import { v4 as uuidv4 } from 'uuid';
 // Mark route as dynamic
 export const dynamic = 'force-dynamic';
 
+// Configure max duration for Vercel
+export const maxDuration = 60;
+
 /**
  * POST /api/ingest
  * Ingest uploaded document into Pinecone index
