@@ -18,7 +18,11 @@ export class PineconeService {
     this.client = new Pinecone({ 
       apiKey: this.apiKey,
     });
-    console.log('Pinecone client initialized with API key:', this.apiKey.substring(0, 10) + '...');
+    // Log API key prefix and length for debugging (first 15 chars + last 4 chars)
+    const keyPreview = this.apiKey.length > 19 
+      ? `${this.apiKey.substring(0, 15)}...${this.apiKey.substring(this.apiKey.length - 4)}`
+      : this.apiKey.substring(0, 10) + '...';
+    console.log('Pinecone client initialized with API key:', keyPreview, `(length: ${this.apiKey.length})`);
   }
 
   /**
