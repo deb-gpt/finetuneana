@@ -29,9 +29,90 @@ export async function GET(request: NextRequest) {
     // Log the raw response for debugging
     console.log('Raw indexes from listIndexes():', JSON.stringify(indexes, null, 2));
     
-    // Note: We removed the hardcoded fallback that was trying specific index names
-    // The control plane API fallback in listIndexes() should handle finding indexes
-    // If indexes.length is still 0, it means there are truly no indexes
+    // WORKAROUND: If we're on Vercel and only got fewer indexes than expected, try to verify known indexes
+    // This handles cases where Pinecone's listIndexes() doesn't return all indexes
+    const isVercel = process.env.VERCEL === '1' || process.env.VERCEL_ENV !== undefined;
+    const knownIndexNames = ['domain-knowledge', 'domain-knowledge-2', 'test-index'];
+    const foundIndexNames = indexes.map((idx: any) => idx.name);
+    
+    console.log(`Environment check: isVercel=${isVercel}, VERCEL=${process.env.VERCEL}, VERCEL_ENV=${process.env.VERCEL_ENV}`);
+    console.log(`Found ${indexes.length} indexes, known indexes: ${knownIndexNames.join(', ')}, found: ${foundIndexNames.join(', ')}`);
+    
+    // ALWAYS check for missing indexes - Pinecone's listIndexes() can be inconsistent
+    // This is a known issue where listIndexes() doesn't always return all indexes
+    if (indexes.length < knownIndexNames.length) {
+      console.log(`⚠️ Only ${indexes.length} index(es) returned from listIndexes(), but we know ${knownIndexNames.length} should exist`);
+      console.log('Missing indexes:', knownIndexNames.filter(name => !foundIndexNames.includes(name)).join(', '));
+      console.log('Attempting to verify and add missing indexes via direct stats checks...');
+      
+      // Get host pattern from existing index if available
+      const existingIndex = indexes[0];
+      const hostPattern = existingIndex?.host 
+        ? existingIndex.host.replace(existingIndex.name, '{indexName}')
+        : '{indexName}-yuwwk50.svc.aped-4627-b74a.pinecone.io';
+      
+      // Check each missing index
+      const missingIndexes = knownIndexNames.filter(name => !foundIndexNames.includes(name));
+      console.log(`Will check ${missingIndexes.length} missing indexes: ${missingIndexes.join(', ')}`);
+      
+      for (const indexName of missingIndexes) {
+        console.log(`\n[${indexName}] Starting verification...`);
+        try {
+          // Try to get stats - if this works, the index exists and is accessible
+          console.log(`[${indexName}] Calling getIndexStats()...`);
+          const stats = await pineconeService.getIndexStats(indexName);
+          console.log(`[${indexName}] ✓ Stats retrieved successfully: ${stats.totalRecordCount || 0} vectors`);
+          
+          // Construct host from pattern
+          const host = hostPattern.replace('{indexName}', indexName);
+          
+          // Add it to the list with info from existing index or defaults
+          const newIndex = {
+            name: indexName,
+            dimension: existingIndex?.dimension || 1536,
+            metric: existingIndex?.metric || 'cosine',
+            host: host,
+            spec: existingIndex?.spec || { serverless: { cloud: 'aws', region: 'us-east-1' } },
+            status: { ready: true, state: 'Ready' },
+          } as any;
+          
+          indexes.push(newIndex);
+          console.log(`[${indexName}] ✓ Successfully added to indexes list`);
+        } catch (error: any) {
+          const errorMsg = error.message?.toLowerCase() || '';
+          const status = error.status || error.statusCode;
+          const errorCode = error.code?.toLowerCase() || '';
+          
+          console.log(`[${indexName}] ✗ Stats check failed:`, {
+            message: error.message,
+            status,
+            code: error.code,
+            errorType: error.name,
+          });
+          
+          if (
+            errorMsg.includes('not found') || 
+            errorMsg.includes('does not exist') || 
+            errorMsg.includes('404') ||
+            errorCode === 'not_found' ||
+            status === 404
+          ) {
+            console.log(`[${indexName}] → Does NOT exist in this Pinecone project (404/not found)`);
+          } else if (errorMsg.includes('forbidden') || errorMsg.includes('403') || status === 403) {
+            console.log(`[${indexName}] → Exists but access is forbidden (403)`);
+          } else {
+            console.log(`[${indexName}] → Error accessing index: ${error.message}`);
+            console.log(`[${indexName}] → This might be a temporary issue or the index is in a different project`);
+          }
+        }
+      }
+      
+      const initialCount = indexes.length - missingIndexes.length;
+      console.log(`\nFinal result: ${indexes.length} indexes after verification (started with ${initialCount})`);
+      console.log('Index names:', indexes.map((idx: any) => idx.name).join(', '));
+    } else {
+      console.log(`✓ All expected indexes found (${indexes.length} indexes)`);
+    }
     
     const finalIndexes = indexes;
     

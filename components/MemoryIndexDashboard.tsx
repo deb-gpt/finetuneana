@@ -36,6 +36,7 @@ export default function MemoryIndexDashboard({
           'Cache-Control': 'no-cache',
         },
       });
+      console.log('Timestamp:', timestamp);
       if (!response.ok) throw new Error('Failed to fetch indexes');
       const data = await response.json();
       let indexesList = data.indexes || [];
