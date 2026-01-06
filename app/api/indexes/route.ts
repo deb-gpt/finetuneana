@@ -12,16 +12,22 @@ export async function GET(request: NextRequest) {
   try {
     // Log environment info for debugging
     const apiKey = process.env.PINECONE_API_KEY || '';
-    const keyPreview = apiKey.length > 19 
-      ? `${apiKey.substring(0, 15)}...${apiKey.substring(apiKey.length - 4)}`
-      : apiKey.substring(0, 10) + '...';
+    const keyPreview = apiKey.length > 45 
+      ? `${apiKey.substring(0, 30)}...${apiKey.substring(apiKey.length - 15)}`
+      : apiKey.length > 19 
+        ? `${apiKey.substring(0, 15)}...${apiKey.substring(apiKey.length - 4)}`
+        : apiKey.substring(0, 10) + '...';
     console.log('Environment check - API key preview:', keyPreview, `(length: ${apiKey.length})`);
     console.log('Environment:', process.env.NODE_ENV || 'unknown');
+    console.log('Vercel env:', process.env.VERCEL_ENV || 'not-vercel');
     
     const pineconeService = new PineconeService();
     
     // First, try to list indexes
     let indexes = await pineconeService.listIndexes();
+    
+    // Log the raw response for debugging
+    console.log('Raw indexes from listIndexes():', JSON.stringify(indexes, null, 2));
     
     // Note: We removed the hardcoded fallback that was trying specific index names
     // The control plane API fallback in listIndexes() should handle finding indexes
