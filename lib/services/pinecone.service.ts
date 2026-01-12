@@ -173,7 +173,7 @@ export class PineconeService {
     try {
       // Check if index already exists
       const existingIndexes = await this.listIndexes();
-      const exists = existingIndexes.some((idx) => idx.name === name);
+      const exists = existingIndexes.some((idx: any) => idx.name === name);
 
       if (exists) {
         throw new Error(`Index ${name} already exists`);
