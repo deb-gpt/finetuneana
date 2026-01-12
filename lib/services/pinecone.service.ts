@@ -578,13 +578,13 @@ export class PineconeService {
       let deletedCount = 0;
       
       // Delete vectors by IDs
-      // Pinecone SDK delete method accepts array of IDs
+      // Pinecone SDK delete method accepts object with 'ids' property or 'filter'
       // Delete in batches of 1000 (Pinecone limit per request)
       for (let i = 0; i < vectorIds.length; i += 1000) {
         const batch = vectorIds.slice(i, i + 1000);
         try {
-          // Use delete method with array of IDs (Pinecone SDK format)
-          await namespaceObj.delete(batch);
+          // Use delete method with ids array (Pinecone SDK format: { ids: [...] })
+          await namespaceObj.delete({ ids: batch });
           deletedCount += batch.length;
         } catch (deleteError: any) {
           console.error(`Error deleting batch ${i / 1000 + 1}:`, deleteError);
@@ -600,10 +600,10 @@ export class PineconeService {
             break;
           } catch (filterError: any) {
             console.error('Filter delete also failed:', filterError);
-            // Last resort: try individual deletes (slower but more reliable)
+            // Last resort: delete one by one (slower but more reliable)
             for (const id of batch) {
               try {
-                await namespaceObj.delete([id]);
+                await namespaceObj.delete({ ids: [id] });
                 deletedCount++;
               } catch (err: any) {
                 console.error(`Error deleting vector ${id}:`, err);
