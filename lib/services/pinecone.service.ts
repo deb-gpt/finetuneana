@@ -30,27 +30,39 @@ export class PineconeService {
   }
 
   /**
-   * List all indexes using Pinecone SDK
-   * Returns an object with an 'indexes' property containing array of index descriptions
+   * List all indexes using Pinecone REST API directly
+   * Uses: GET https://api.pinecone.io/indexes with api-key header
+   * Returns an array of index descriptions
    * Each index has: name, dimension, metric, host, spec, status
    */
   async listIndexes() {
     try {
-      console.log('Calling Pinecone listIndexes()...');
-      console.log('API Key hash (first 20 + last 10):', 
+      console.log('Calling Pinecone REST API: GET https://api.pinecone.io/indexes');
+      console.log('API Key preview:', 
         this.apiKey.substring(0, 20) + '...' + this.apiKey.substring(this.apiKey.length - 10));
       
-      // Use the SDK method directly as per Pinecone documentation
-      // Returns: { indexes: [{ name, dimension, metric, host, spec, status }, ...] }
-      // Note: This might have caching or consistency issues - we'll verify missing indexes separately
-      const response = await this.client.listIndexes();
-      console.log('Pinecone listIndexes response:', JSON.stringify(response, null, 2));
-      console.log('Response type:', typeof response, 'Has indexes property:', 'indexes' in response);
+      // Use direct REST API call as specified
+      const response = await fetch('https://api.pinecone.io/indexes', {
+        method: 'GET',
+        headers: {
+          'api-key': this.apiKey,
+          'Content-Type': 'application/json',
+        },
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error('Pinecone API error:', response.status, errorText);
+        throw new Error(`Failed to list indexes: ${response.status} - ${errorText}`);
+      }
+
+      const data = await response.json();
+      console.log('Pinecone API raw response:', JSON.stringify(data, null, 2));
       
-      // The SDK returns an object with an 'indexes' property containing the array
-      const indexList = response.indexes || [];
+      // Response format: { indexes: [{ name, dimension, metric, host, spec, status }, ...] }
+      const indexList = data.indexes || [];
       
-      console.log(`Found ${indexList.length} indexes from Pinecone SDK`);
+      console.log(`Found ${indexList.length} indexes from Pinecone REST API`);
       
       // Log each index for debugging
       if (indexList.length > 0) {
@@ -63,42 +75,6 @@ export class PineconeService {
         console.warn('  1. No indexes exist in this Pinecone project');
         console.warn('  2. API key might be for a different project/environment');
         console.warn('  3. Indexes might be in a different region');
-      }
-      
-      // Verify if known indexes exist (even if not in listIndexes response)
-      // This helps debug if indexes exist but aren't being returned
-      const knownIndexNames = ['domain-knowledge', 'domain-knowledge-2', 'test-index'];
-      const foundIndexNames = indexList.map((idx: any) => idx.name);
-      const missingIndexes = knownIndexNames.filter(name => !foundIndexNames.includes(name));
-      
-      if (missingIndexes.length > 0) {
-        console.log(`⚠️ Known indexes not in listIndexes() response: ${missingIndexes.join(', ')}`);
-        console.log('Attempting to verify if these indexes exist...');
-        
-        for (const indexName of missingIndexes) {
-          try {
-            // Try to get stats - if this works, the index exists but wasn't in listIndexes()
-            const stats = await this.getIndexStats(indexName);
-            console.log(`  ✓ Index "${indexName}" EXISTS and is accessible (${stats.totalRecordCount || 0} vectors)`);
-            console.log(`    ⚠️ But it was NOT returned by listIndexes() - this is unusual!`);
-            // Add it to the list (with minimal required properties)
-            indexList.push({
-              name: indexName,
-              dimension: 1536, // Default, will be updated by stats if available
-              metric: 'cosine',
-              host: '', // Will be populated when index is accessed
-              spec: { serverless: { cloud: 'aws', region: 'us-east-1' } },
-              status: { ready: true, state: 'Ready' },
-            } as any);
-          } catch (error: any) {
-            const errorMsg = error.message?.toLowerCase() || '';
-            if (errorMsg.includes('not found') || errorMsg.includes('404')) {
-              console.log(`  ✗ Index "${indexName}" does NOT exist in this Pinecone project`);
-            } else {
-              console.log(`  ? Index "${indexName}" status unclear: ${error.message}`);
-            }
-          }
-        }
       }
       
       return indexList;
