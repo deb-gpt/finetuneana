@@ -71,10 +71,43 @@ export default function IngestionControls({
       setProgress('Processing...');
       setLogs((prev) => [...prev, 'Processing document...']);
 
-      const data = await response.json();
+      // Check content type before parsing JSON
+      const contentType = response.headers.get('content-type');
+      let data: any;
+      
+      if (contentType && contentType.includes('application/json')) {
+        data = await response.json();
+      } else {
+        // If not JSON, try to get text and parse error message
+        const text = await response.text();
+        console.error('Non-JSON response:', text.substring(0, 200));
+        
+        // Try to extract error message from HTML or text
+        let errorMessage = 'Ingestion failed';
+        if (text.includes('413') || text.includes('Payload Too Large') || text.includes('Request Entity Too Large')) {
+          errorMessage = 'File is too large. Maximum file size is 4.5MB on Vercel. Please use a smaller file or split it into multiple files.';
+        } else if (text.includes('timeout') || text.includes('504')) {
+          errorMessage = 'Request timed out. The file might be too large or complex. Try a smaller file.';
+        } else if (text.includes('500')) {
+          errorMessage = 'Server error occurred. Please check the file format and try again.';
+        } else if (text.length > 0) {
+          // Try to extract meaningful error from text
+          const match = text.match(/<title>(.*?)<\/title>/i) || text.match(/error[:\s]+(.*?)(?:\n|$)/i);
+          if (match) {
+            errorMessage = match[1] || text.substring(0, 100);
+          }
+        }
+        
+        throw new Error(errorMessage);
+      }
 
       if (!response.ok) {
-        throw new Error(data.error || 'Ingestion failed');
+        // Handle duplicate file error (409)
+        if (response.status === 409 && data.code === 'DUPLICATE_FILE') {
+          const errorMsg = `${data.message}\n\nExisting file: ${data.existingFile?.filename}\nUploaded: ${data.existingFile?.uploaded_at}\nVectors: ${data.existingFile?.vectors_count}\n\n${data.suggestion || ''}`;
+          throw new Error(errorMsg);
+        }
+        throw new Error(data.error || data.message || 'Ingestion failed');
       }
 
       setLogs((prev) => [
@@ -83,8 +116,18 @@ export default function IngestionControls({
         `✓ Chunking completed: ${data.stats.chunksCreated} chunks`,
         `✓ Embeddings generated`,
         `✓ Vectors upserted: ${data.stats.vectorsUpserted} vectors in ${data.stats.batches} batches`,
-        '✓ Ingestion completed successfully!',
+        data.warnings && data.warnings.length > 0
+          ? `⚠ Ingestion completed with ${data.warnings.length} warning(s)`
+          : '✓ Ingestion completed successfully!',
       ]);
+      
+      // Show warnings if any
+      if (data.warnings && data.warnings.length > 0) {
+        data.warnings.forEach((warning: string) => {
+          setLogs((prev) => [...prev, `⚠ ${warning}`]);
+        });
+      }
+      
       setProgress('Complete');
 
       await onStartIngestion();

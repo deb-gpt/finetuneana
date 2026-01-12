@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { writeFile, readFile, unlink } from 'fs/promises';
+import { writeFile, unlink } from 'fs/promises';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { createHash } from 'crypto';
@@ -9,65 +9,55 @@ import { OpenAIService } from '@/lib/services/openai.service';
 import { PineconeService } from '@/lib/services/pinecone.service';
 import { v4 as uuidv4 } from 'uuid';
 
-// Mark route as dynamic
 export const dynamic = 'force-dynamic';
-
-// Configure max duration for Vercel
-export const maxDuration = 60;
+export const maxDuration = 300; // 5 minutes for large files
 
 /**
- * POST /api/ingest
- * Ingest uploaded document into Pinecone index
+ * POST /api/ingest-from-blob
+ * Ingest document from Vercel Blob URL into Pinecone
+ * This handles large files that were uploaded to blob storage
  */
 export async function POST(request: NextRequest) {
   let tempFilePath: string | null = null;
 
   try {
-    const formData = await request.formData();
-    const file = formData.get('file') as File;
-    const indexName = formData.get('indexName') as string;
-    const namespace = formData.get('namespace') as string | null;
-    const topic = formData.get('topic') as string;
-    const subtopic = formData.get('subtopic') as string | null;
-    const source = formData.get('source') as string;
-    const version = formData.get('version') as string | null;
-    const chunkSize = parseInt(formData.get('chunkSize') as string) || 1000;
-    const overlap = parseInt(formData.get('overlap') as string) || 200;
-    const useHeadings = formData.get('useHeadings') === 'true';
-    const dimensions = parseInt(formData.get('dimensions') as string) || 1536;
-    const forceUpload = formData.get('forceUpload') === 'true';
+    const body = await request.json();
+    const {
+      blobUrl,
+      filename,
+      indexName,
+      namespace,
+      topic,
+      subtopic,
+      source,
+      version,
+      chunkSize = 2000,
+      overlap = 300,
+      useHeadings = false,
+      dimensions = 1536,
+      forceUpload = false,
+    } = body;
 
-    if (!file || !indexName || !topic || !source) {
+    if (!blobUrl || !filename || !indexName || !topic || !source) {
       return NextResponse.json(
-        { error: 'Missing required fields: file, indexName, topic, source' },
+        { error: 'Missing required fields: blobUrl, filename, indexName, topic, source' },
         { status: 400 }
       );
     }
 
-    // Check file size FIRST - Vercel has a 4.5MB limit for serverless functions
-    // This prevents reading large files into memory unnecessarily
-    const maxFileSize = 4.5 * 1024 * 1024; // 4.5MB
-    const fileSizeMB = file.size / (1024 * 1024);
-    
-    if (file.size > maxFileSize) {
-      // For files over 4.5MB, return error - client should use blob upload
-      return NextResponse.json(
-        {
-          error: 'File too large',
-          code: 'FILE_TOO_LARGE',
-          message: `File size (${fileSizeMB.toFixed(2)}MB) exceeds Vercel's 4.5MB limit for direct uploads.`,
-          suggestion: 'Large files are automatically handled via blob storage. The client should retry with blob upload.',
-          fileSizeMB: fileSizeMB.toFixed(2),
-          maxSizeMB: '4.5',
-        },
-        { status: 413 }
-      );
+    // Download file from blob storage
+    console.log(`Downloading file from blob: ${blobUrl}`);
+    const blobResponse = await fetch(blobUrl);
+    if (!blobResponse.ok) {
+      throw new Error(`Failed to download file from blob: ${blobResponse.statusText}`);
     }
 
-    // Read file content (only if under limit)
-    const bytes = await file.arrayBuffer();
-    const buffer = Buffer.from(bytes);
+    const arrayBuffer = await blobResponse.arrayBuffer();
+    const buffer = Buffer.from(arrayBuffer);
+    const fileSizeMB = (buffer.length / 1024 / 1024).toFixed(2);
     
+    console.log(`Downloaded file: ${filename}, size: ${fileSizeMB}MB`);
+
     // Calculate file hash for duplicate detection
     const fileHash = createHash('sha256').update(buffer).digest('hex');
     const uploadedAt = new Date().toISOString();
@@ -97,23 +87,22 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Save file temporarily (buffer already created above)
-    tempFilePath = join(tmpdir(), `${uuidv4()}-${file.name}`);
+    // Save file temporarily
+    tempFilePath = join(tmpdir(), `${uuidv4()}-${filename}`);
     await writeFile(tempFilePath, buffer);
 
-    // Step 1: Parse document with retry and fallback
-    console.log(`Parsing file: ${file.name} (${(file.size / 1024).toFixed(2)}KB)`);
+    // Parse document
+    console.log(`Parsing file: ${filename} (${fileSizeMB}MB)`);
     const parserService = new PDFParserService();
     let parsed;
     let parseWarnings: string[] = [];
     
     try {
-      parsed = await parserService.parseFile(buffer, file.name);
+      parsed = await parserService.parseFile(buffer, filename);
       console.log(`Parsed ${parsed.pageCount} pages, ${parsed.text.length} characters`);
       
       if (!parsed.text || parsed.text.length === 0) {
         parseWarnings.push('File appears to be empty or could not extract text');
-        // Try to extract at least something - maybe it's an image-only PDF
         parsed.text = 'No text content extracted from this file. It may contain only images or be encrypted.';
         parsed.pageCount = parsed.pageCount || 1;
       }
@@ -121,45 +110,35 @@ export async function POST(request: NextRequest) {
       console.error('Error parsing file:', parseError);
       parseWarnings.push(`Initial parse failed: ${parseError.message}`);
       
-      // Try fallback: if it's a PDF, try basic text extraction
-      if (file.name.toLowerCase().endsWith('.pdf')) {
+      if (filename.toLowerCase().endsWith('.pdf')) {
         try {
           console.log('Attempting fallback PDF parsing...');
-          // Try with PDFParserService again with different approach
           const fallbackParsed = await parserService.parsePDF(buffer);
           if (fallbackParsed.text && fallbackParsed.text.trim().length > 0) {
             parsed = fallbackParsed;
             parseWarnings.push('Used fallback parsing method - some formatting may be lost');
-            console.log(`Fallback parse successful: ${parsed.text.length} characters`);
           } else {
             throw new Error('Fallback parsing also returned empty text');
           }
         } catch (fallbackError: any) {
-          console.error('Fallback parsing also failed:', fallbackError);
-          // Last resort: create a minimal entry so ingestion can continue
           parsed = {
-            text: `[File: ${file.name}] - Unable to extract text content. File may be corrupted, encrypted, or image-only. Original error: ${parseError.message}`,
+            text: `[File: ${filename}] - Unable to extract text content. File may be corrupted, encrypted, or image-only. Original error: ${parseError.message}`,
             pageCount: 1,
             metadata: {},
           };
-          parseWarnings.push('Could not extract text - created placeholder entry. File will be ingested but may not be searchable.');
+          parseWarnings.push('Could not extract text - created placeholder entry.');
         }
       } else {
-        // For non-PDF files, create placeholder so ingestion can continue
         parsed = {
-          text: `[File: ${file.name}] - Parsing failed: ${parseError.message}. File will be ingested but content may not be searchable.`,
+          text: `[File: ${filename}] - Parsing failed: ${parseError.message}.`,
           pageCount: 1,
           metadata: {},
         };
-        parseWarnings.push('Parsing failed - created placeholder entry. File will be ingested but may not be searchable.');
+        parseWarnings.push('Parsing failed - created placeholder entry.');
       }
     }
-    
-    if (parseWarnings.length > 0) {
-      console.warn('Parse warnings:', parseWarnings);
-    }
 
-    // Step 2: Chunk text
+    // Chunk text
     const chunkingService = new ChunkingService();
     const chunks = chunkingService.chunkText(parsed.text, {
       chunkSize,
@@ -167,7 +146,7 @@ export async function POST(request: NextRequest) {
       useHeadings,
     });
 
-    // Step 3: Generate embeddings with retry logic
+    // Generate embeddings
     console.log(`Generating embeddings for ${chunks.length} chunks...`);
     const openAIService = new OpenAIService();
     const texts = chunks.map((chunk) => chunk.text);
@@ -179,66 +158,48 @@ export async function POST(request: NextRequest) {
     
     while (retryCount < maxRetries) {
       try {
-        embeddings = await openAIService.generateEmbeddingsBatch(
-          texts,
-          dimensions
-        );
+        embeddings = await openAIService.generateEmbeddingsBatch(texts, dimensions);
         console.log(`Generated ${embeddings.length} embeddings`);
-        break; // Success, exit retry loop
+        break;
       } catch (embeddingError: any) {
         retryCount++;
         console.error(`Error generating embeddings (attempt ${retryCount}/${maxRetries}):`, embeddingError);
         
         if (retryCount >= maxRetries) {
-          // Last attempt failed - try processing in smaller batches
-          console.log('Attempting to generate embeddings in smaller batches...');
+          // Try smaller batches
           try {
-            const batchSize = Math.max(1, Math.floor(texts.length / 3)); // Process in 3 batches
+            const batchSize = Math.max(1, Math.floor(texts.length / 3));
             embeddings = [];
             
             for (let i = 0; i < texts.length; i += batchSize) {
               const batch = texts.slice(i, i + batchSize);
-              console.log(`Processing embedding batch ${Math.floor(i / batchSize) + 1} (${batch.length} chunks)...`);
-              
               try {
                 const batchEmbeddings = await openAIService.generateEmbeddingsBatch(batch, dimensions);
                 embeddings.push(...batchEmbeddings);
-                // Small delay between batches to avoid rate limits
                 await new Promise(resolve => setTimeout(resolve, 1000));
               } catch (batchError: any) {
-                console.error(`Batch ${Math.floor(i / batchSize) + 1} failed:`, batchError.message);
-                // Create zero vectors as fallback for failed batches
                 const zeroVector = new Array(dimensions).fill(0);
                 embeddings.push(...batch.map(() => zeroVector));
                 embeddingWarnings.push(`Batch ${Math.floor(i / batchSize) + 1} failed - using zero vectors`);
               }
             }
-            
-            console.log(`Generated ${embeddings.length} embeddings (some may be zero vectors)`);
           } catch (finalError: any) {
-            // Even batch processing failed - return error but with helpful message
             return NextResponse.json(
               { 
                 error: `Failed to generate embeddings after ${maxRetries} attempts: ${finalError.message || 'OpenAI API error'}`,
-                suggestion: 'Please check your OpenAI API key, quota, and network connection. You can try again later.',
-                partialData: {
-                  chunksCreated: chunks.length,
-                  parsedTextLength: parsed.text.length,
-                },
+                suggestion: 'Please check your OpenAI API key, quota, and network connection.',
               },
               { status: 500 }
             );
           }
         } else {
-          // Wait before retry (exponential backoff)
-          const waitTime = Math.pow(2, retryCount) * 1000; // 2s, 4s, 8s
-          console.log(`Waiting ${waitTime}ms before retry...`);
+          const waitTime = Math.pow(2, retryCount) * 1000;
           await new Promise(resolve => setTimeout(resolve, waitTime));
         }
       }
     }
 
-    // Step 4: Prepare vectors for Pinecone
+    // Prepare vectors
     const vectors = chunks.map((chunk, index) => ({
       id: `${uuidv4()}-${index}`,
       values: embeddings[index],
@@ -249,18 +210,16 @@ export async function POST(request: NextRequest) {
         version: version || undefined,
         chunk_id: chunk.id,
         page: chunk.page || parsed.pageCount || undefined,
-        filename: file.name,
-        file_hash: fileHash, // Store file hash for duplicate detection
-        uploaded_at: uploadedAt, // Store upload timestamp
-        // Store FULL chunk text - don't truncate! This is what the chatbot needs
+        filename: filename,
+        file_hash: fileHash,
+        uploaded_at: uploadedAt,
         text: chunk.text,
-        chunk_text: chunk.text, // Also store as chunk_text for compatibility
-        // Store preview separately if needed (first 200 chars)
+        chunk_text: chunk.text,
         preview: chunk.text.substring(0, 200),
       },
     }));
 
-    // Step 5: Upsert to Pinecone
+    // Upsert to Pinecone
     const pineconeService = new PineconeService();
     const upsertResult = await pineconeService.upsertVectors(
       indexName,
@@ -273,11 +232,8 @@ export async function POST(request: NextRequest) {
       await unlink(tempFilePath).catch(console.error);
     }
 
-    // Collect all warnings
+    // Collect warnings
     const allWarnings = [...parseWarnings, ...embeddingWarnings];
-    if (file.size > maxFileSize) {
-      allWarnings.push(`File size (${fileSizeMB}MB) exceeds recommended limit but was processed`);
-    }
     
     return NextResponse.json({
       success: true,
@@ -288,19 +244,19 @@ export async function POST(request: NextRequest) {
         chunksCreated: chunks.length,
         vectorsUpserted: upsertResult.totalVectors,
         batches: upsertResult.batches,
+        fileSizeMB: parseFloat(fileSizeMB),
       },
       warnings: allWarnings.length > 0 ? allWarnings : undefined,
     });
   } catch (error: any) {
-    console.error('Error ingesting document:', error);
+    console.error('Error ingesting from blob:', error);
 
-    // Clean up temp file on error
     if (tempFilePath) {
       await unlink(tempFilePath).catch(console.error);
     }
 
     return NextResponse.json(
-      { error: error.message || 'Failed to ingest document' },
+      { error: error.message || 'Failed to ingest document from blob' },
       { status: 500 }
     );
   }

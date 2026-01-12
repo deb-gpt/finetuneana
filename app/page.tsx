@@ -3,12 +3,12 @@
 import { useState } from 'react';
 import MemoryIndexDashboard from '@/components/MemoryIndexDashboard';
 import CreateIndexForm from '@/components/CreateIndexForm';
-import DocumentUpload from '@/components/DocumentUpload';
-import MetadataForm from '@/components/MetadataForm';
+import MultiFileUpload, { FileWithMetadata } from '@/components/MultiFileUpload';
 import ChunkingConfig from '@/components/ChunkingConfig';
-import IngestionControls from '@/components/IngestionControls';
+import MultiFileIngestionControls from '@/components/MultiFileIngestionControls';
 import QueryPanel from '@/components/QueryPanel';
 import Chatbot from '@/components/Chatbot';
+import FileList from '@/components/FileList';
 
 type ViewMode = 'dashboard' | 'upload' | 'query' | 'chatbot';
 
@@ -16,17 +16,8 @@ export default function Home() {
   const [viewMode, setViewMode] = useState<ViewMode>('dashboard');
   const [showCreateIndex, setShowCreateIndex] = useState(false);
   const [selectedIndex, setSelectedIndex] = useState<string | null>(null);
-  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [files, setFiles] = useState<FileWithMetadata[]>([]);
   const [fileText, setFileText] = useState<string>('');
-  const [metadata, setMetadata] = useState<{
-    topic: string;
-    subtopic?: string;
-    source: string;
-    version?: string;
-  }>({
-    topic: '',
-    source: '',
-  });
   const [chunkingConfig, setChunkingConfig] = useState({
     chunkSize: 2000, // Increased default for better context
     overlap: 300, // Increased overlap for better continuity
@@ -36,54 +27,14 @@ export default function Home() {
   const [dimensions, setDimensions] = useState(1536);
   const [refreshTrigger, setRefreshTrigger] = useState(0);
 
-  const handleFileSelect = async (file: File) => {
-    setSelectedFile(file);
-    // For chunking preview, we need to parse the file properly
-    // PDF/DOCX are binary files and need server-side parsing
-    try {
-      // For text-based files (CSV, TXT), read directly
-      if (file.name.endsWith('.csv') || file.name.endsWith('.txt')) {
-        const text = await file.text();
-        setFileText(text); // Full text for text-based files
-      } else if (file.name.endsWith('.pdf') || file.name.endsWith('.docx') || file.name.endsWith('.doc')) {
-        // For binary files (PDF/DOCX), we need to parse on server
-        // Call API to parse and get text for preview
-        setFileText(''); // Clear previous text
-        const formData = new FormData();
-        formData.append('file', file);
-        formData.append('preview', 'true'); // Flag for preview mode
-        
-        try {
-          const response = await fetch('/api/parse-preview', {
-            method: 'POST',
-            body: formData,
-          });
-          
-          if (response.ok) {
-            const data = await response.json();
-            setFileText(data.text || '');
-          } else if (response.status === 413) {
-            // File too large - skip preview but show message
-            const data = await response.json().catch(() => ({}));
-            setFileText('');
-            console.warn('File too large for preview, but ingestion will work');
-            // Show a user-friendly message (could add a toast notification here)
-          } else {
-            // If parsing fails, show empty (chunking will work during actual ingestion)
-            setFileText('');
-            console.warn('Preview parsing not available, but ingestion will work');
-          }
-        } catch (parseError) {
-          // Preview parsing failed, but actual ingestion will work
-          setFileText('');
-          console.warn('Preview parsing not available, but ingestion will work');
-        }
-      } else {
-        setFileText('');
-      }
-    } catch (error) {
-      console.error('Error reading file:', error);
-      setFileText('');
+  // For chunking preview, use first file's text if available
+  // This is just for preview purposes
+  const handleFilesChange = (newFiles: FileWithMetadata[]) => {
+    setFiles(newFiles);
+    // Update preview text from first file if available
+    if (newFiles.length > 0 && newFiles[0].file) {
+      // Preview will be handled by MultiFileUpload component
+      setFileText(''); // Clear preview for multi-file mode
     }
   };
 
@@ -192,16 +143,10 @@ export default function Home() {
               </div>
             )}
 
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              <DocumentUpload
-                onFileSelect={handleFileSelect}
-                selectedFile={selectedFile}
-              />
-              <MetadataForm
-                onMetadataChange={setMetadata}
-                fileText={fileText}
-              />
-            </div>
+            <MultiFileUpload
+              onFilesChange={handleFilesChange}
+              files={files}
+            />
 
             <ChunkingConfig
               text={fileText}
@@ -243,15 +188,24 @@ export default function Home() {
               </div>
             </div>
 
-            <IngestionControls
+            <MultiFileIngestionControls
               onStartIngestion={handleRefreshDashboard}
               selectedIndex={selectedIndex}
-              selectedFile={selectedFile}
-              metadata={metadata}
+              files={files}
               chunkingConfig={chunkingConfig}
               namespace={namespace || undefined}
               dimensions={dimensions}
             />
+
+            {selectedIndex && (
+              <div className="mt-8">
+                <FileList
+                  indexName={selectedIndex}
+                  namespace={namespace || undefined}
+                  onFileDeleted={handleRefreshDashboard}
+                />
+              </div>
+            )}
           </div>
         )}
 

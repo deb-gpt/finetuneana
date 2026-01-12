@@ -107,6 +107,101 @@ export class OpenAIService {
   }
 
   /**
+   * Extract comprehensive metadata from document using GPT-4
+   */
+  async extractMetadata(
+    text: string,
+    filename?: string
+  ): Promise<{
+    topic: string;
+    subtopic?: string;
+    source: string;
+    version?: string;
+    document_type?: string;
+    tags?: string[];
+    summary?: string;
+    date?: string;
+    author?: string;
+  }> {
+    try {
+      const prompt = `Analyze the following document${filename ? ` (filename: ${filename})` : ''} and extract structured metadata.
+
+Extract the following information:
+- topic: Main topic/subject of the document
+- subtopic: Optional subtopic or category
+- source: Source organization/publication (infer from content or filename)
+- version: Version number if mentioned
+- document_type: Type of document (report, manual, article, data, etc.)
+- tags: List of relevant tags/keywords (3-5 tags)
+- summary: Brief summary in 1-2 sentences
+- date: Document date if mentioned (YYYY-MM-DD format)
+- author: Author or organization if mentioned
+
+Return ONLY valid JSON in this format:
+{
+    "topic": "string",
+    "subtopic": "string or null",
+    "source": "string",
+    "version": "string or null",
+    "document_type": "string or null",
+    "tags": ["tag1", "tag2"],
+    "summary": "string or null",
+    "date": "YYYY-MM-DD or null",
+    "author": "string or null"
+}`;
+
+      // Limit text to first 5000 chars for efficiency
+      const textSample = text.length > 5000 ? text.substring(0, 5000) : text;
+
+      const response = await this.client.chat.completions.create({
+        model: 'gpt-4',
+        messages: [
+          {
+            role: 'system',
+            content:
+              'You are a metadata extraction assistant. Analyze documents and extract structured metadata. Always return valid JSON.',
+          },
+          {
+            role: 'user',
+            content: `${prompt}\n\nDocument content:\n${textSample}`,
+          },
+        ],
+        response_format: { type: 'json_object' },
+        temperature: 0.3, // Lower temperature for more consistent extraction
+        max_tokens: 500,
+      });
+
+      const content = response.choices[0].message.content;
+      if (content) {
+        const metadata = JSON.parse(content);
+        // Validate and clean metadata
+        return {
+          topic: metadata.topic || 'General',
+          subtopic: metadata.subtopic || undefined,
+          source: metadata.source || filename || 'Unknown',
+          version: metadata.version || undefined,
+          document_type: metadata.document_type || undefined,
+          tags: metadata.tags || undefined,
+          summary: metadata.summary || undefined,
+          date: metadata.date || undefined,
+          author: metadata.author || undefined,
+        };
+      }
+
+      return {
+        topic: 'General',
+        source: filename || 'Unknown',
+      };
+    } catch (error) {
+      console.error('Error extracting metadata:', error);
+      return {
+        topic: 'General',
+        source: filename || 'Unknown',
+      };
+    }
+  }
+
+  /**
    * Generate chat response using OpenAI with context
    */
   async generateChatResponse(

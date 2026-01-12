@@ -379,5 +379,245 @@ export class PineconeService {
       throw error;
     }
   }
+
+  /**
+   * Check if a file with the same hash already exists in the index
+   */
+  async checkDuplicateFile(
+    indexName: string,
+    fileHash: string,
+    namespace?: string
+  ): Promise<{ filename: string; uploaded_at: string; namespace?: string; chunks_count: number; vectors_count: number } | null> {
+    try {
+      const index = this.client.index(indexName);
+      const namespaceObj = namespace ? index.namespace(namespace) : index;
+
+      // Query with a dummy vector to search by metadata filter
+      // We'll use a zero vector since we only care about metadata
+      const dummyVector = new Array(1536).fill(0); // Default dimension, adjust if needed
+      
+      const queryResponse = await namespaceObj.query({
+        vector: dummyVector,
+        topK: 1,
+        includeMetadata: true,
+        filter: {
+          file_hash: { $eq: fileHash },
+        },
+      });
+
+      if (queryResponse.matches && queryResponse.matches.length > 0) {
+        const match = queryResponse.matches[0];
+        const metadata = match.metadata || {};
+        
+        // Get stats for this file
+        const stats = await this.getIndexStats(indexName);
+        const fileStats = await this.getFileStats(indexName, metadata.filename as string, namespace);
+        
+        return {
+          filename: metadata.filename as string,
+          uploaded_at: metadata.uploaded_at as string || new Date().toISOString(),
+          namespace: namespace || '',
+          chunks_count: fileStats.chunks_count,
+          vectors_count: fileStats.vectors_count,
+        };
+      }
+
+      return null;
+    } catch (error: any) {
+      console.error('Error checking duplicate file:', error);
+      // If query fails, assume no duplicate (allow upload)
+      return null;
+    }
+  }
+
+  /**
+   * Get statistics for a specific file
+   */
+  async getFileStats(
+    indexName: string,
+    filename: string,
+    namespace?: string
+  ): Promise<{ chunks_count: number; vectors_count: number }> {
+    try {
+      const index = this.client.index(indexName);
+      const namespaceObj = namespace ? index.namespace(namespace) : index;
+
+      // Query to count vectors for this file
+      const dummyVector = new Array(1536).fill(0);
+      const queryResponse = await namespaceObj.query({
+        vector: dummyVector,
+        topK: 10000, // Max to get all vectors for this file
+        includeMetadata: true,
+        filter: {
+          filename: { $eq: filename },
+        },
+      });
+
+      const vectors_count = queryResponse.matches?.length || 0;
+      const chunks_count = vectors_count; // Same for now
+
+      return { chunks_count, vectors_count };
+    } catch (error: any) {
+      console.error('Error getting file stats:', error);
+      return { chunks_count: 0, vectors_count: 0 };
+    }
+  }
+
+  /**
+   * List all unique files in an index
+   */
+  async listFiles(
+    indexName: string,
+    namespace?: string
+  ): Promise<Array<{
+    filename: string;
+    namespace: string;
+    uploaded_at: string;
+    chunks_count: number;
+    vectors_count: number;
+    topic: string;
+    source: string;
+    metadata: Record<string, any>;
+  }>> {
+    try {
+      const index = this.client.index(indexName);
+      const namespaceObj = namespace ? index.namespace(namespace) : index;
+
+      // Get index stats to see total vectors
+      const stats = await this.getIndexStats(indexName);
+      
+      // Query with dummy vector to get sample of vectors with metadata
+      // We'll need to query multiple times or use a different approach
+      // For now, query a large sample and extract unique filenames
+      const dummyVector = new Array(1536).fill(0);
+      const queryResponse = await namespaceObj.query({
+        vector: dummyVector,
+        topK: 10000, // Get as many as possible
+        includeMetadata: true,
+      });
+
+      // Group by filename
+      const fileMap = new Map<string, {
+        filename: string;
+        namespace: string;
+        uploaded_at: string;
+        chunks_count: number;
+        vectors_count: number;
+        topic: string;
+        source: string;
+        metadata: Record<string, any>;
+      }>();
+
+      if (queryResponse.matches) {
+        for (const match of queryResponse.matches) {
+          const metadata = match.metadata || {};
+          const filename = metadata.filename as string;
+          
+          if (!filename) continue;
+
+          if (!fileMap.has(filename)) {
+            fileMap.set(filename, {
+              filename,
+              namespace: namespace || '',
+              uploaded_at: metadata.uploaded_at as string || new Date().toISOString(),
+              chunks_count: 0,
+              vectors_count: 0,
+              topic: metadata.topic as string || 'Unknown',
+              source: metadata.source as string || 'Unknown',
+              metadata: metadata,
+            });
+          }
+
+          const fileInfo = fileMap.get(filename)!;
+          fileInfo.vectors_count++;
+          fileInfo.chunks_count++;
+        }
+      }
+
+      return Array.from(fileMap.values()).sort((a, b) => 
+        new Date(b.uploaded_at).getTime() - new Date(a.uploaded_at).getTime()
+      );
+    } catch (error: any) {
+      console.error('Error listing files:', error);
+      return [];
+    }
+  }
+
+  /**
+   * Delete all vectors for a specific file
+   */
+  async deleteFileVectors(
+    indexName: string,
+    filename: string,
+    namespace?: string
+  ): Promise<number> {
+    try {
+      const index = this.client.index(indexName);
+      const namespaceObj = namespace ? index.namespace(namespace) : index;
+
+      // Query to find all vector IDs for this file
+      const dummyVector = new Array(1536).fill(0);
+      const queryResponse = await namespaceObj.query({
+        vector: dummyVector,
+        topK: 10000,
+        includeMetadata: true,
+        filter: {
+          filename: { $eq: filename },
+        },
+      });
+
+      if (!queryResponse.matches || queryResponse.matches.length === 0) {
+        return 0;
+      }
+
+      const vectorIds = queryResponse.matches.map(match => match.id);
+      
+      // Delete vectors by ID (Pinecone supports delete by IDs)
+      // Note: Pinecone delete operation may vary by SDK version
+      // For now, we'll use the delete method if available
+      let deletedCount = 0;
+      
+      // Delete vectors by IDs
+      // Pinecone SDK delete method accepts array of IDs
+      // Delete in batches of 1000 (Pinecone limit per request)
+      for (let i = 0; i < vectorIds.length; i += 1000) {
+        const batch = vectorIds.slice(i, i + 1000);
+        try {
+          // Use delete method with array of IDs (Pinecone SDK format)
+          await namespaceObj.delete(batch);
+          deletedCount += batch.length;
+        } catch (deleteError: any) {
+          console.error(`Error deleting batch ${i / 1000 + 1}:`, deleteError);
+          // Fallback: try delete with filter (if supported by SDK version)
+          try {
+            await namespaceObj.delete({
+              filter: {
+                filename: { $eq: filename },
+              },
+            });
+            // If filter delete succeeds, count all remaining vectors
+            deletedCount = vectorIds.length;
+            break;
+          } catch (filterError: any) {
+            console.error('Filter delete also failed:', filterError);
+            // Last resort: try individual deletes (slower but more reliable)
+            for (const id of batch) {
+              try {
+                await namespaceObj.delete([id]);
+                deletedCount++;
+              } catch (err: any) {
+                console.error(`Error deleting vector ${id}:`, err);
+              }
+            }
+          }
+        }
+      }
+
+      return deletedCount;
+    } catch (error: any) {
+      console.error('Error deleting file vectors:', error);
+      throw error;
+    }
+  }
 }
 

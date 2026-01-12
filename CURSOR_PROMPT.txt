@@ -1,0 +1,83 @@
+Create a FastAPI REST API that replicates the Ana Memory Creation & Training system functionality. Use Python FastAPI, Pinecone Python SDK, and OpenAI.
+
+REQUIREMENTS:
+
+1. API Endpoints:
+   - POST /api/indexes - Create Pinecone index (name, dimension: 1536/3072, metric: cosine/euclidean/dotproduct)
+     * Handle 403 FORBIDDEN errors (max indexes reached), return error with suggestion to use namespaces
+     * Error response: {"error": "Max indexes reached", "code": "FORBIDDEN", "suggestion": "Use namespaces to partition data instead"}
+   - GET /api/indexes - List all indexes with stats (filter out Deleting/Deleted/Terminated, verify each exists)
+   - DELETE /api/indexes/{index_name} - Delete index using control plane API
+   - GET /api/indexes/{index_name}/namespaces - Get namespaces for index
+   - GET /api/indexes/{index_name}/files - List all files in index (namespace? query param)
+   - GET /api/indexes/{index_name}/files/{filename} - Get file details
+   - DELETE /api/indexes/{index_name}/files/{filename} - Delete all vectors for a file
+   - POST /api/ingest - Upload single or multiple PDF/DOCX/CSV files, parse, chunk, embed, upsert to Pinecone
+     * Single file: `file` (File), `indexName`, `namespace?`, `topic?`, `subtopic?`, `source?`, `version?`, `chunkSize`, `overlap`, `useHeadings`, `dimensions`, `autoExtractMetadata?` (bool, default: false), `metadataOverrides?` (JSON string), `forceUpload?` (bool, default: false)
+     * Duplicate detection: Calculate file hash (MD5/SHA256), check against existing files, return error if duplicate (unless forceUpload=true)
+     * File tracking: Store file_hash and uploaded_at in all vector metadata
+     * Multi-file: `files` (List[File]), `indexName`, `namespace?`, `topic` (shared), `subtopic?`, `source` (shared), `version?`, `chunkSize`, `overlap`, `useHeadings`, `dimensions`, `fileMetadata?` (JSON string for per-file overrides)
+     * Process each file independently, collect all vectors, batch upsert together (100 per batch)
+     * Return per-file results with success/failure status
+   - POST /api/query - Semantic search (indexName, query, topK, topic, subtopic, namespace, dimensions)
+   - POST /api/chat - RAG chatbot (indexName, query, namespace, systemPrompt, conversationHistory, topK)
+   - POST /api/parse-preview - Parse file for preview (optional)
+   - POST /api/suggest-topic - Suggest topic/subtopic (optional, legacy)
+   - POST /api/extract-metadata - Extract comprehensive metadata using GPT (recommended)
+     * Request: {text, filename?}
+     * Response: {topic, subtopic?, source, version?, document_type?, tags?, summary?, date?, author?, confidence?}
+     * Uses GPT-4 to analyze document and extract structured metadata
+
+2. Service Classes:
+   - PineconeService: Initialize with API key, list_indexes(), create_index() (handle 403 max indexes error, suggest namespaces), delete_index(), get_index_stats(), get_namespaces(), upsert_vectors() (batch 100), query_index(), list_files(), get_file_details(), delete_file_vectors(), check_duplicate()
+   - FileTrackerService: calculate_file_hash(), check_duplicate(), register_file(), list_files(), get_file_info(), delete_file()
+   - OpenAIService: generate_embedding(), generate_embeddings_batch(), generate_chat_response(), extract_metadata(text, filename?) - Extract comprehensive metadata using GPT-4
+   - PDFParserService: parse_pdf(), parse_docx(), parse_csv(), parse_file(), enhance_table_text() (detect tables, format with separators)
+   - ChunkingService: chunk_text() with config (chunkSize: 2000, overlap: 300, useHeadings), prioritize breaks: paragraphs > sentences > newlines > words, filter <50 char chunks
+
+3. Key Details:
+   - Use pinecone.Pinecone(api_key=os.getenv("PINECONE_API_KEY"))
+   - Default namespace: None or "" (NOT "__default__")
+   - Store FULL chunk text in metadata (text + chunk_text fields, don't truncate)
+   - Batch upserts: 100 vectors per batch
+   - Retry logic: 3 attempts with exponential backoff for OpenAI
+   - Error resilience: Continue with warnings, don't fail completely
+   - Table parsing: Detect multi-column patterns, format with | separators
+   - **CRITICAL: Index Limits**: Free/tiered plans allow ~5 serverless indexes max per project
+   - **Best Practice**: Use NAMESPACES to partition data, not multiple indexes (unlimited namespaces per index)
+   - Handle 403 FORBIDDEN errors for index creation, return helpful error suggesting namespace usage
+   - One index + multiple namespaces = better organization, no extra cost, unlimited partitioning
+
+4. Dependencies:
+   fastapi, uvicorn, python-multipart, pinecone-client, openai, pypdf, python-docx, python-dotenv, pydantic
+
+5. File Structure:
+   main.py, services/ (pinecone_service.py, openai_service.py, pdf_parser_service.py, chunking_service.py), models/schemas.py, api/routes/ (indexes.py, ingest.py, query.py, chat.py)
+
+6. Error Handling:
+   - File size: Warn but continue
+   - Parsing errors: Try fallback, create placeholder
+   - Empty files: Create placeholder text
+   - OpenAI errors: Retry 3x, then smaller batches, then zero vectors
+   - Multi-file: If one file fails, continue processing other files, report per-file results
+   - Return warnings array in response, per-file errors in fileResults
+
+7. Metadata Structure:
+   {source, topic, subtopic?, version?, chunk_id (format: "{filename}-{uuid}-{index}"), page?, filename (CRITICAL for multi-file), file_hash (CRITICAL for duplicate detection), uploaded_at (ISO 8601 timestamp), file_index? (for batch order), text (FULL), chunk_text (FULL), preview (200 chars)}
+   For multi-file: Always include filename in metadata, support per-file metadata overrides via fileMetadata JSON parameter
+   Duplicate detection: Use file_hash to detect duplicates, store uploaded_at for tracking
+
+Use Pydantic for validation, async/await for I/O, type hints, proper logging, CORS middleware. Search Pinecone Python SDK documentation if needed for latest API patterns.
+
+MULTI-FILE UPLOAD:
+- Accept both `file` (single) and `files` (List[File]) in same endpoint
+- Process files with concurrency limit (asyncio.Semaphore, limit=3-5)
+- Apply shared metadata, allow per-file overrides via `fileMetadata` JSON
+- Process each file: parse, chunk, embed independently
+- Collect all vectors, combine, then batch upsert together (100 per batch)
+- Track per-file results (success/failure, stats, warnings)
+- Always include `filename` in each vector's metadata
+- If one file fails, continue with others, report in fileResults
+- Response includes aggregated stats and per-file details
+
+
