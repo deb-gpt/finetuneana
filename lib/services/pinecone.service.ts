@@ -551,7 +551,7 @@ export class PineconeService {
       
       // Get index host for REST API
       const indexes = await this.listIndexes();
-      const indexInfo = indexes.find(idx => idx.name === indexName);
+      const indexInfo = indexes.find((idx: any) => idx.name === indexName);
       
       if (!indexInfo || !indexInfo.host) {
         throw new Error(`Index ${indexName} not found or has no host`);
