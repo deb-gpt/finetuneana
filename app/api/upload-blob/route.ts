@@ -31,8 +31,8 @@ export async function POST(request: NextRequest) {
       success: true,
       url: blob.url,
       pathname: blob.pathname,
-      size: blob.size,
-      uploadedAt: blob.uploadedAt,
+      size: file.size, // Use file size instead of blob.size
+      uploadedAt: new Date().toISOString(), // Use current timestamp
     });
   } catch (error: any) {
     console.error('Error uploading to blob:', error);
