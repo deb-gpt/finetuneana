@@ -13,12 +13,14 @@ interface Index {
 interface MemoryIndexDashboardProps {
   onSelectIndex: (indexName: string) => void;
   onCreateIndex: () => void;
+  onQueryIndex?: (indexName: string) => void; // Navigate to chatbot
   refreshTrigger?: number;
 }
 
 export default function MemoryIndexDashboard({
   onSelectIndex,
   onCreateIndex,
+  onQueryIndex,
   refreshTrigger,
 }: MemoryIndexDashboardProps) {
   const [indexes, setIndexes] = useState<Index[]>([]);
@@ -199,7 +201,13 @@ export default function MemoryIndexDashboard({
                       View
                     </button>
                     <button
-                      onClick={() => onSelectIndex(index.name)}
+                      onClick={() => {
+                        if (onQueryIndex) {
+                          onQueryIndex(index.name);
+                        } else {
+                          onSelectIndex(index.name);
+                        }
+                      }}
                       className="text-primary-600 hover:text-primary-900"
                     >
                       Query

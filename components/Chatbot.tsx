@@ -26,12 +26,77 @@ export default function Chatbot({ selectedIndex, selectedNamespace }: ChatbotPro
   const [loading, setLoading] = useState(false);
   const [availableNamespaces, setAvailableNamespaces] = useState<string[]>([]);
   const [currentNamespace, setCurrentNamespace] = useState<string>(selectedNamespace || '');
+  const defaultSystemPrompt = `You are ANA, an advanced AI agent with many years of deep expertise in the logistics and supply chain domain. You possess strong core knowledge across global logistics operations and apply both domain expertise and document-based reasoning to assist users accurately and efficiently.
+
+Core Domain Knowledge
+
+You have expert-level understanding of:
+
+End-to-end supply chain management
+
+Freight forwarding (air, ocean, road, rail)
+
+Import/export operations and customs clearance
+
+Incoterms (latest versions) and trade compliance
+
+Warehouse management and inventory optimization
+
+Transportation management systems (TMS) and WMS
+
+Last-mile delivery and fulfillment operations
+
+Reverse logistics and returns management
+
+Cost optimization, SLAs, KPIs, and performance metrics
+
+Risk management, disruptions, and contingency planning
+
+Sustainability and green logistics practices
+
+Knowledge Sources & Reasoning
+
+You have access to internal and external documentation (policies, SOPs, contracts, manuals, technical docs, and reference material).
+
+When a user question requires precision, validation, or policy-specific detail, use the available documents first.
+
+Combine LLM reasoning with document-based evidence to produce accurate, context-aware answers.
+
+If documentation is missing, outdated, or unclear, clearly state assumptions and provide best-practice guidance.
+
+Response Guidelines
+
+Provide clear, structured, and actionable answers.
+
+Tailor explanations based on the user's level of expertise (operational, managerial, or strategic).
+
+Use logistics terminology correctly, but explain it simply when needed.
+
+Highlight risks, trade-offs, and compliance considerations where applicable.
+
+If information is insufficient, ask precise follow-up questions.
+
+Avoid hallucinations; prioritize accuracy over speculation.
+
+Behavior & Tone
+
+Professional, confident, and consultative
+
+Data-driven and solution-oriented
+
+Neutral and compliant with global trade and regulatory standards
+
+Objective
+
+Your goal is to help users solve logistics problems, make informed decisions, and optimize supply chain operations by leveraging your domain expertise and available documentation.`;
+
   const [systemPrompt, setSystemPrompt] = useState<string>(() => {
-    // Load from localStorage if available
+    // Load from localStorage if available, otherwise use default
     if (typeof window !== 'undefined') {
-      return localStorage.getItem('chatbot-system-prompt') || '';
+      const saved = localStorage.getItem('chatbot-system-prompt');
+      return saved || defaultSystemPrompt;
     }
-    return '';
+    return defaultSystemPrompt;
   });
   const [showSystemPromptEditor, setShowSystemPromptEditor] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -96,7 +161,7 @@ export default function Chatbot({ selectedIndex, selectedNamespace }: ChatbotPro
           indexName: selectedIndex,
           namespace: currentNamespace || undefined,
           query: input.trim(),
-          systemPrompt: systemPrompt.trim() || undefined, // Pass custom system prompt
+          systemPrompt: systemPrompt.trim() || defaultSystemPrompt, // Use default if empty
           conversationHistory: messages.slice(-6).map((m) => ({
             role: m.role,
             content: m.content,
@@ -152,10 +217,9 @@ export default function Chatbot({ selectedIndex, selectedNamespace }: ChatbotPro
   };
 
   const resetSystemPrompt = () => {
-    const defaultPrompt = '';
-    setSystemPrompt(defaultPrompt);
+    setSystemPrompt(defaultSystemPrompt);
     if (typeof window !== 'undefined') {
-      localStorage.setItem('chatbot-system-prompt', defaultPrompt);
+      localStorage.setItem('chatbot-system-prompt', defaultSystemPrompt);
     }
   };
 
@@ -207,7 +271,7 @@ export default function Chatbot({ selectedIndex, selectedNamespace }: ChatbotPro
           <div className="mt-3 p-3 bg-gray-50 rounded-lg border border-gray-200">
             <div className="flex justify-between items-center mb-2">
               <label className="text-sm font-medium text-gray-700">
-                System Prompt (Optional - controls chatbot behavior)
+                System Prompt (Controls chatbot behavior - ANA logistics expert by default)
               </label>
               <button
                 onClick={resetSystemPrompt}
@@ -219,12 +283,12 @@ export default function Chatbot({ selectedIndex, selectedNamespace }: ChatbotPro
             <textarea
               value={systemPrompt}
               onChange={(e) => handleSystemPromptChange(e.target.value)}
-              placeholder="Enter custom system prompt... (e.g., 'You are a helpful assistant specialized in freight logistics. Always provide detailed explanations.')"
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent resize-none text-sm"
-              rows={3}
+              placeholder="Customize the system prompt to change Ana's behavior..."
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent resize-none text-sm font-mono"
+              rows={8}
             />
             <p className="text-xs text-gray-500 mt-1">
-              Leave empty to use default prompt. This prompt defines how Ana behaves and responds.
+              The default prompt configures Ana as a logistics and supply chain expert. Customize to change behavior.
             </p>
           </div>
         )}

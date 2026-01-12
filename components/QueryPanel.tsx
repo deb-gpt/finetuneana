@@ -17,9 +17,10 @@ interface QueryResult {
 
 interface QueryPanelProps {
   selectedIndex: string | null;
+  onNavigateToChat?: (indexName: string, namespace?: string) => void;
 }
 
-export default function QueryPanel({ selectedIndex }: QueryPanelProps) {
+export default function QueryPanel({ selectedIndex, onNavigateToChat }: QueryPanelProps) {
   const [query, setQuery] = useState('');
   const [topic, setTopic] = useState('');
   const [subtopic, setSubtopic] = useState('');
@@ -220,9 +221,20 @@ export default function QueryPanel({ selectedIndex }: QueryPanelProps) {
 
         {results.length > 0 && (
           <div className="mt-6 space-y-4">
-            <h3 className="font-semibold text-gray-800">
-              Results ({results.length})
-            </h3>
+            <div className="flex justify-between items-center">
+              <h3 className="font-semibold text-gray-800">
+                Results ({results.length})
+              </h3>
+              {onNavigateToChat && selectedIndex && (
+                <button
+                  onClick={() => onNavigateToChat(selectedIndex, namespace || undefined)}
+                  className="px-4 py-2 bg-primary-600 text-white text-sm rounded-lg hover:bg-primary-700 transition flex items-center gap-2"
+                  title="Open chatbot with this index and namespace"
+                >
+                  💬 Chat with this Memory
+                </button>
+              )}
+            </div>
             {results.map((result, index) => (
               <div
                 key={result.id}
@@ -232,12 +244,23 @@ export default function QueryPanel({ selectedIndex }: QueryPanelProps) {
                   <div className="text-sm font-medium text-gray-600">
                     Result #{index + 1} (Score: {result.score.toFixed(4)})
                   </div>
-                  <div className="text-xs text-gray-500">
-                    {result.metadata.filename && (
-                      <span>File: {result.metadata.filename}</span>
-                    )}
-                    {result.metadata.page && (
-                      <span className="ml-2">Page: {result.metadata.page}</span>
+                  <div className="flex items-center gap-2">
+                    <div className="text-xs text-gray-500">
+                      {result.metadata.filename && (
+                        <span>File: {result.metadata.filename}</span>
+                      )}
+                      {result.metadata.page && (
+                        <span className="ml-2">Page: {result.metadata.page}</span>
+                      )}
+                    </div>
+                    {onNavigateToChat && selectedIndex && (
+                      <button
+                        onClick={() => onNavigateToChat(selectedIndex, namespace || undefined)}
+                        className="ml-2 px-3 py-1 bg-primary-600 text-white text-xs rounded hover:bg-primary-700 transition"
+                        title="Chat about this result"
+                      >
+                        💬 Chat
+                      </button>
                     )}
                   </div>
                 </div>

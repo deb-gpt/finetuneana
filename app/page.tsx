@@ -117,6 +117,10 @@ export default function Home() {
               setSelectedIndex(indexName);
               setViewMode('upload');
             }}
+            onQueryIndex={(indexName) => {
+              setSelectedIndex(indexName);
+              setViewMode('chatbot');
+            }}
             onCreateIndex={() => setShowCreateIndex(true)}
             refreshTrigger={refreshTrigger}
           />
@@ -223,7 +227,14 @@ export default function Home() {
                 </button>
               </div>
             )}
-            <QueryPanel selectedIndex={selectedIndex} />
+            <QueryPanel 
+              selectedIndex={selectedIndex} 
+              onNavigateToChat={(indexName, namespace) => {
+                setSelectedIndex(indexName);
+                setNamespace(namespace || '');
+                setViewMode('chatbot');
+              }}
+            />
           </div>
         )}
 
@@ -246,7 +257,10 @@ export default function Home() {
                 Please select an index from the dashboard to use the chatbot
               </div>
             )}
-            <Chatbot selectedIndex={selectedIndex} />
+            <Chatbot 
+              selectedIndex={selectedIndex} 
+              selectedNamespace={namespace || undefined}
+            />
           </div>
         )}
 
