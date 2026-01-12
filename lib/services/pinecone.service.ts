@@ -545,6 +545,7 @@ export class PineconeService {
 
   /**
    * Delete all vectors for a specific file
+   * Uses Pinecone REST API directly since SDK doesn't have delete method
    */
   async deleteFileVectors(
     indexName: string,
@@ -572,44 +573,72 @@ export class PineconeService {
 
       const vectorIds = queryResponse.matches.map(match => match.id);
       
-      // Delete vectors by ID (Pinecone supports delete by IDs)
-      // Note: Pinecone delete operation may vary by SDK version
-      // For now, we'll use the delete method if available
+      // Get index host for REST API
+      const indexes = await this.listIndexes();
+      const indexInfo = indexes.find(idx => idx.name === indexName);
+      
+      if (!indexInfo || !indexInfo.host) {
+        throw new Error(`Index ${indexName} not found or has no host`);
+      }
+
+      const host = indexInfo.host;
       let deletedCount = 0;
       
-      // Delete vectors by IDs
-      // Pinecone SDK delete method accepts object with 'ids' property or 'filter'
+      // Delete vectors using Pinecone REST API
       // Delete in batches of 1000 (Pinecone limit per request)
       for (let i = 0; i < vectorIds.length; i += 1000) {
         const batch = vectorIds.slice(i, i + 1000);
         try {
-          // Use delete method with ids array (Pinecone SDK format: { ids: [...] })
-          await namespaceObj.delete({ ids: batch });
-          deletedCount += batch.length;
-        } catch (deleteError: any) {
-          console.error(`Error deleting batch ${i / 1000 + 1}:`, deleteError);
-          // Fallback: try delete with filter (if supported by SDK version)
-          try {
-            await namespaceObj.delete({
-              filter: {
-                filename: { $eq: filename },
-              },
-            });
-            // If filter delete succeeds, count all remaining vectors
-            deletedCount = vectorIds.length;
-            break;
-          } catch (filterError: any) {
-            console.error('Filter delete also failed:', filterError);
-            // Last resort: delete one by one (slower but more reliable)
+          // Use Pinecone REST API for deletion
+          const deleteUrl = `https://${host}/vectors/delete`;
+          const deletePayload: any = {
+            ids: batch,
+          };
+          
+          // Add namespace if not default
+          if (namespace && namespace !== '') {
+            deletePayload.namespace = namespace;
+          }
+
+          const deleteResponse = await fetch(deleteUrl, {
+            method: 'POST',
+            headers: {
+              'Api-Key': this.apiKey,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(deletePayload),
+          });
+
+          if (deleteResponse.ok) {
+            deletedCount += batch.length;
+          } else {
+            const errorText = await deleteResponse.text();
+            console.error(`Error deleting batch ${i / 1000 + 1}:`, deleteResponse.status, errorText);
+            // Try individual deletes as fallback
             for (const id of batch) {
               try {
-                await namespaceObj.delete({ ids: [id] });
-                deletedCount++;
+                const singleDeleteResponse = await fetch(deleteUrl, {
+                  method: 'POST',
+                  headers: {
+                    'Api-Key': this.apiKey,
+                    'Content-Type': 'application/json',
+                  },
+                  body: JSON.stringify({
+                    ids: [id],
+                    ...(namespace && namespace !== '' ? { namespace } : {}),
+                  }),
+                });
+                if (singleDeleteResponse.ok) {
+                  deletedCount++;
+                }
               } catch (err: any) {
                 console.error(`Error deleting vector ${id}:`, err);
               }
             }
           }
+        } catch (deleteError: any) {
+          console.error(`Error deleting batch ${i / 1000 + 1}:`, deleteError);
+          // Continue with next batch
         }
       }
 
